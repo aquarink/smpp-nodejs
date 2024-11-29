@@ -44,49 +44,65 @@ const server = smpp.createServer(function (session) {
     session.on('submit_sm', async function (pdu) {
         console.log('Received submit_sm:', pdu);
 
-        let srtMessage = '';
-        if (typeof pdu.short_message === 'object' && pdu.short_message.message) {
-            srtMessage = pdu.short_message.message; // Ambil isi dari objek
-        } else {
-            srtMessage = pdu.short_message; // Jika bukan objek, ambil langsung
+        // Filter only relevant PDU fields
+        const relevantKeys = [
+            "command_length",
+            "command_id",
+            "command_status",
+            "sequence_number",
+            "command",
+            "service_type",
+            "source_addr_ton",
+            "source_addr_npi",
+            "source_addr",
+            "dest_addr_ton",
+            "dest_addr_npi",
+            "destination_addr",
+            "esm_class",
+            "protocol_id",
+            "priority_flag",
+            "schedule_delivery_time",
+            "validity_period",
+            "registered_delivery",
+            "replace_if_present_flag",
+            "data_coding",
+            "sm_default_msg_id",
+            "short_message",
+        ];
+
+        const filteredPDU = {};
+        relevantKeys.forEach(key => {
+            if (key in pdu) {
+                filteredPDU[key] = pdu[key];
+            }
+        });
+
+        // Flatten the short_message field if it exists
+        if (filteredPDU.short_message && typeof filteredPDU.short_message === 'object') {
+            for (const subKey in filteredPDU.short_message) {
+                filteredPDU[`short_message[${subKey}]`] = filteredPDU.short_message[subKey];
+            }
+            delete filteredPDU.short_message;
         }
 
+        // Convert filtered PDU to query string
+        const queryData = new URLSearchParams(filteredPDU).toString();
+
         // Cek tipe pesan (MO atau DR/DN)
-        if (pdu.esm_class === 0x04) { // DR/DN
+        if (pdu.esm_class === 0x04) {
             console.log('Delivery Receipt received');
 
-            // Ekstrak data dari short_message untuk DR/DN
-            const idMatch = srtMessage.match(/id:(\S+)/);
-            const statMatch = srtMessage.match(/stat:(\S+)/);
-
-            const drData = {
-                id: idMatch ? idMatch[1] : 'unknown', // ID pesan
-                status: statMatch ? statMatch[1] : 'unknown', // Status pesan
-                source: pdu.source_addr, // Nomor pengirim
-                destination: pdu.destination_addr // Nomor tujuan
-            };
-
-            const queryStringDn = new URLSearchParams(drData).toString();
-
             try {
-                const response = await axios.get(`http://117.53.45.183/smpp/dn.php?${queryStringDn}`);
+                const response = await axios.get(`http://117.53.45.183/smpp/dn.php?${queryData}`);
                 console.log('Forwarded DR/DN:', response.data);
             } catch (err) {
                 console.error('Failed to forward DR/DN:', err.message);
             }
         } else { // MO
             console.log('Mobile Originated (MO) received');
-            
-            const moData = {
-                source: pdu.source_addr, // Nomor pengirim
-                destination: pdu.destination_addr, // Nomor tujuan
-                message: srtMessage // Isi pesan
-            };
-
-            const queryStringMo = new URLSearchParams(moData).toString();
 
             try {
-                const response = await axios.get(`http://117.53.45.183/smpp/mo.php?${queryStringMo}`);
+                const response = await axios.get(`http://117.53.45.183/smpp/mo.php?${queryData}`);
                 console.log('Forwarded MO:', response.data);
             } catch (err) {
                 console.error('Failed to forward MO:', err.message);
